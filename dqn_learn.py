@@ -124,6 +124,8 @@ def dqn_learing(
     ######
 
     # YOUR CODE HERE
+    Q = q_func(input_arg, num_actions).type(dtype)
+    target_Q = q_func(input_arg, num_actions).type(dtype)
 
     ######
 
@@ -180,6 +182,17 @@ def dqn_learing(
         #####
 
         # YOUR CODE HERE
+        # storing latest observation
+        idx = replay_buffer.store_frame(last_obs)
+        # selecting action epsilon-greedy
+        a = select_epilson_greedy_action(Q, replay_buffer.encode_recent_observation(), t)
+        # executing action and observe reward, next observation, etc.
+        last_obs, reward, done, _ = env.step(a)
+        if done:
+            last_obs = env.reset()
+        # storing effect
+        replay_buffer.store_effect(idx, a, reward, done)
+	
 
         #####
 
@@ -218,7 +231,38 @@ def dqn_learing(
             #####
 
             # YOUR CODE HERE
+            # 3a - sampling a batch of tranisitions
+            observations, actions, rewards, next_observations, done_indicator = replay_buffer.sample(batch_size)
+            
+            # move to torch variables
+            observations = Variable(torch.from_numpy(observations).type(dtype) / 255.0)
+            actions = Variable(torch.from_numpy(actions).long())
+            rewards = Variable(torch.from_numpy(rewards))
+            next_observations = Variable(torch.from_numpy(next_observations).type(dtype) / 255.0)
+            is_done_indicator = Variable(torch.from_numpy(1 - done_indicator)).type(dtype)
 
+            # moving to GPU if available
+            if USE_CUDA:
+               actions = actions.cuda()
+               rewards = rewards.cuda()
+         
+            # 3b - compute the Bellman error
+            # compute current Q value - extract by action order
+            current = Q(observations).gather(1, actions.unsqueeze(1))
+            max_next_Q = target_Q(next_observations).detach().max(1)[0]
+            # compute target value -  masking out post terminal
+            target = rewards + gamma*max_next_Q*is_done_indicator
+            d_error = target.unsqueeze(1) - current 
+            # clip bellman error and multiply by -1 since pytorch minimize
+            d_error = d_error.clamp(-1, 1) *(-1.0)
+            # 3c - train the model using bellman error
+            optimizer.zero_grad()
+            current.backward(d_error)
+            optimizer.step()
+            num_param_updates += 1
+            # 3d - update target_Q network
+            if t % target_update_freq == 0:
+                target_Q.load_state_dict(Q.state_dict())
             #####
 
         ### 4. Log progress and keep track of statistics
